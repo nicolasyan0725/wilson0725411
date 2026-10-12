@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D 海龜模型檢視器</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden; /* 防止滾動條 */
+            background-color: #a0a0a0; /* 預設背景色 */
+            font-family: 'Inter', sans-serif;
+        }
+        #info {
+            position: absolute;
+            top: 10px;
+            width: 100%;
+            text-align: center;
+            color: #ffffff;
+            z-index: 100;
+            pointer-events: none; /* 讓滑鼠事件穿透到下方的 canvas */
+            text-shadow: 1px 1px 2px black;
+        }
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: white;
+            font-size: 24px;
+            font-weight: bold;
+            z-index: 200;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.5);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top: 4px solid white;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+        #error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background-color: rgba(255, 0, 0, 0.8);
+            color: white;
+            padding: 20px;
+            border-radius: 8px;
+            display: none;
+            z-index: 300;
+            text-align: center;
+        }
+    </style>
+    <!-- 引入 Three.js 核心庫 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <!-- 引入 GLTFLoader 擴展 -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+    <!-- 引入 OrbitControls 擴展 -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    <!-- 引入 RGBELoader 用於環境光 -->
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/RGBELoader.js"></script>
+</head>
+<body>
+    <div id="info">
+        <h3>3D 海龜模型</h3>
+        <p>滑鼠左鍵旋轉 | 滾輪縮放 | 右鍵平移</p>
+    </div>
+    
+    <div id="loading">
+        <div class="spinner"></div>
+        <span>載入模型中...</span>
+    </div>
+
+    <div id="error-message">
+        <h4>載入失敗</h4>
+        <p id="error-details">無法載入 3D 模型。</p>
+    </div>
+
+    <script>
+        let camera, scene, renderer, controls, mixer;
+        const clock = new THREE.Clock();
+
+        init();
+        animate();
+
+        function init() {
+            // 建立場景
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color( 0x87CEEB ); // 設定背景顏色 (天空藍)
+            // 可選：加入霧效
+            // scene.fog = new THREE.Fog( 0x87CEEB, 10, 50 );
+
+            // 建立相機
+            camera = new THREE.PerspectiveCamera( 45, window.innerWidth / window.innerHeight, 0.1, 100 );
+            camera.position.set( -5, 3, 5 ); // 設定初始相機位置
+
+            // 建立渲染器
+            renderer = new THREE.WebGLRenderer( { antialias: true } );
+            renderer.setPixelRatio( window.devicePixelRatio );
+            renderer.setSize( window.innerWidth, window.innerHeight );
+            renderer.outputEncoding = THREE.sRGBEncoding; // 確保顏色顯示正確
+            renderer.toneMapping = THREE.ACESFilmicToneMapping; // 讓高光更自然
+            renderer.toneMappingExposure = 1.0;
+            document.body.appendChild( renderer.domElement );
+
+            // 加入環境光
+            const ambientLight = new THREE.AmbientLight( 0xffffff, 0.6 ); // 白光，強度 0.6
+            scene.add( ambientLight );
+
+            // 加入平行光 (模擬太陽)
+            const dirLight = new THREE.DirectionalLight( 0xffffff, 1 );
+            dirLight.position.set( 5, 10, 7.5 );
+            dirLight.castShadow = true; // 允許產生陰影 (如果模型支援)
+            scene.add( dirLight );
+
+            // 加入軌道控制器 (讓使用者可以旋轉、縮放、平移)
+            controls = new THREE.OrbitControls( camera, renderer.domElement );
+            controls.enableDamping = true; // 加入阻尼效果，讓操作更滑順
+            controls.dampingFactor = 0.05;
+            controls.target.set( 0, 0, 0 ); // 相機看著原點
+
+            // 載入 GLB 模型
+            const loader = new THREE.GLTFLoader();
+            const modelUrl = 'https://wilson0725411.ifree.page/3dmodel/seaturtle.glb';
+
+            loader.load(
+                modelUrl,
+                function ( gltf ) {
+                    // 載入成功時的回呼函數
+                    const model = gltf.scene;
+                    
+                    // 根據模型大小調整位置和縮放
+                    // 這裡先設定一個適當的縮放比例，您可能需要根據實際模型大小進行調整
+                    model.scale.set(1, 1, 1); 
+                    
+                    // 將模型置中
+                    const box = new THREE.Box3().setFromObject(model);
+                    const center = box.getCenter(new THREE.Vector3());
+                    model.position.x += (model.position.x - center.x);
+                    model.position.y += (model.position.y - center.y);
+                    model.position.z += (model.position.z - center.z);
+                    
+                    scene.add( model );
+
+                    // 如果模型有動畫，初始化 Mixer
+                    if (gltf.animations && gltf.animations.length > 0) {
+                        mixer = new THREE.AnimationMixer(model);
+                        // 播放第一個動畫
+                        const action = mixer.clipAction(gltf.animations[0]);
+                        action.play();
+                    }
+
+                    // 隱藏載入畫面
+                    document.getElementById('loading').style.display = 'none';
+
+                    // 重新計算 controls 目標，確保聚焦在模型中心
+                    controls.target.copy(center);
+                    controls.update();
+
+                },
+                function ( xhr ) {
+                    // 載入進度回呼函數 (可選，這裡只在 console 顯示)
+                    console.log( ( xhr.loaded / xhr.total * 100 ) + '% loaded' );
+                },
+                function ( error ) {
+                    // 載入失敗的回呼函數
+                    console.error( 'An error happened loading the model:', error );
+                    document.getElementById('loading').style.display = 'none';
+                    const errorElement = document.getElementById('error-message');
+                    errorElement.style.display = 'block';
+                    document.getElementById('error-details').innerText = "模型載入失敗，請檢查網址是否有效且允許跨域存取 (CORS)。\n" + error.message;
+                }
+            );
+
+            // 監聽視窗大小改變事件
+            window.addEventListener( 'resize', onWindowResize );
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize( window.innerWidth, window.innerHeight );
+        }
+
+        function animate() {
+            requestAnimationFrame( animate );
+            
+            const delta = clock.getDelta();
+
+            // 更新動畫 (如果有)
+            if (mixer) {
+                mixer.update(delta);
+            }
+
+            // 更新控制器
+            controls.update(); 
+
+            // 渲染場景
+            renderer.render( scene, camera );
+        }
+    </script>
+</body>
+</html>
